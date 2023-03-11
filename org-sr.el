@@ -78,11 +78,12 @@
 
 ;;; Database
 (defvar org-sr-db--connection nil
-  )
+  "Database connection.")
 
 (defun org-sr-db--get-connection ()
   "Get stable connection to database."
   (if (and org-sr-db--connection
+           (file-exists-p org-sr-db-location)
            (emacsql-live-p org-sr-db--connection))
       org-sr-db--connection
     nil))
@@ -90,7 +91,7 @@
 (defconst org-sr-schemata
   '((card-data
      ([(id :primary-key :not-null)
-       file
+       (file :not-null)
        (due text)
        interval
        difficulty
@@ -118,6 +119,13 @@
   "Initialize database with CONN with default schema table."
   (pcase-dolist (`(,table ,schema) org-sr-schemata)
     (emacsql conn [:create-table $i1 $S2] table schema)))
+
+(defun org-sr-db--close ()
+  "Close connection to database."
+  (let ((db (org-sr-db--get-connection)))
+    (when (and db
+           (emacsql-live-p db))
+    (emacsql-close db))))
 
 (defun org-sr-db ()
   "The entry point of Org-roam-sr.
@@ -161,28 +169,34 @@ return the connection."
         (when (org-sr-db-card-p)
           (funcall fn)))))))
 
-(defun org-sr-card-data-phisycal-pos (card-data)
-  "If the card CARD-DATA still phisycally exist, return its position."
-  (let* ((id (org-sr-card-data-id card-data))
-         (file (org-sr-card-data-file card-data)))
-    (with-current-buffer (find-file-noselect file)
-      (org-with-wide-buffer
-       (org-map-entries (lambda () (point))
-                        (format "+CARD_ID=%S" id)
-                        'file)))))
-
 (defun org-sr-db-insert-card-data ()
   "Insert card data at point into database."
-  (let* ((data-list (string-split (org-entry-get (point) "CARD_DATA") ","))
-         (id (org-sr-db-get-card-id))
-         (file (buffer-file-name)))
-    (pcase-let ((`(,due ,interval ,difficulty ,stability ,retrievability
-                   ,grade ,lapses ,reps ,review) data-list))
-      (org-sr-db-query
-       [:insert :into card-data
-        :value $v1]
-       (vector id file due interval difficulty stability retrievability grade lapses
-               reps review)))))
+  (let ((id (org-sr-db-get-card-id))
+        (file (buffer-file-name))
+        (today-str (format-time-string "%FT%TZ" (current-time) t)))
+    (when (org-sr-db-query [:select * :from card-data
+                            :where (= id $s1)] id)
+      (error "Card %S already contained!" id))
+    (if-let* ((data-list (org-entry-get (point) "CARD_DATA"))
+                (data-list (string-split data-list ",")))
+          (pcase-let ((`(,due ,interval ,difficulty ,stability ,retrievability
+                         ,grade ,lapses ,reps ,review) data-list))
+            (org-sr-db-query
+             [:insert :into card-data
+              :values $v1]
+             (vector id file due
+                     (string-to-number interval)
+                     (string-to-number difficulty)
+                     (string-to-number stability)
+                     (string-to-number retrievability)
+                     (string-to-number grade)
+                     (string-to-number lapses)
+                     (string-to-number reps)
+                     review)))
+        (org-sr-db-query
+         [:insert-into card-data
+          [id file due] :values $v1]
+         (vector id file today-str)))))
 
 (defun org-sr-db-clear-card-data (&optional id)
   "Clear cache for card ID in database."
@@ -197,20 +211,94 @@ return the connection."
       id
     (let ((id (uuidgen-4)))
       (org-entry-put (point) "CARD_ID" id)
+      (save-buffer)
       id)))
 
-;;; Card & card-data
-(cl-defstruct org-sr-card
-  "Structure that represent a card to revise."
-  id file due title contents)
+;;;###autoload
+(defun org-sr-db-sync (&optional force)
+  "Sync database with files.
 
+If FORCE, force it."
+  (interactive)
+  (org-sr-db--close)
+  (when force (delete-file org-sr-db-location))
+  (org-sr-db)
+  ;; TODO: update cache only when they changed.
+  (dolist (file (org-sr-db-list-files))
+    (with-current-buffer (find-file-noselect file)
+      (org-sr-db-map-cards
+       (list #'org-sr-db-insert-card-data)))))
+
+(defun org-sr-db-update-file ()
+  "Update informations about current file in database.")
+
+;;; Card & card-data
 (cl-defstruct org-sr-card-data
   "Algorithm parameters."
   id file due interval difficulty stability retrievability
   grade lapses reps review)
 
-(cl-defmethod org-sr-populate ((card org-sr-card-data))
-  "Populate card data CARD according to database.")
+(cl-defmethod org-sr-populate ((card-data org-sr-card-data))
+  "Populate card data CARD-DATA according to database."
+  (when-let* ((id (cl-struct-slot-value 'org-sr-card-data 'id card-data))
+              (card-data-info (car (org-sr-db-query
+                                    [:select [file due interval difficulty
+                                                   stability retrievability
+                                                   grade lapses reps review]
+                                     :from card-data
+                                     :where (= id $s1)
+                                     :limit 1]
+                                    id))))
+    ;; TODO fill the card data
+    (pcase-let ((`(,file ,due ,interval ,difficulty ,stability
+                   ,retrievability ,grade ,lapses ,reps ,review)
+                 card-data-info))
+      (setf (org-sr-card-data-file card-data) file
+            (org-sr-card-data-due card-data) due
+            (org-sr-card-data-interval card-data) interval
+            (org-sr-card-data-difficulty card-data) difficulty
+            (org-sr-card-data-stability card-data) stability
+            (org-sr-card-data-retrievability card-data) retrievability
+            (org-sr-card-data-grade card-data) grade
+            (org-sr-card-data-lapses card-data) lapses
+            (org-sr-card-data-reps card-data) reps
+            (org-sr-card-data-review card-data) review)
+      card-data)))
+
+(defun org-sr-card-data-exist-p (card-data)
+  "If the card CARD-DATA still phisycally exist, return its position."
+  (let* ((id (org-sr-card-data-id card-data))
+         (file (org-sr-card-data-file card-data)))
+    (when (file-exists-p file)
+      (with-current-buffer (find-file-noselect file)
+        (org-with-wide-buffer
+         (org-map-entries (lambda () (point))
+                          (format "+CARD_ID=%S" id)
+                          'file))))))
+
+(defun org-sr-card-data-today-list ()
+  "Return the list of all card-data that dued today and before."
+  (let* ((time-str (format-time-string "%FT%TZ" (current-time) t))
+         (id-list
+          (org-sr-db-query
+           (format "SELECT id FROM card_data WHERE due < DATE('%s')" time-str))))
+    (mapcar
+     (lambda (x)
+       (org-sr-populate (make-org-sr-card-data :id (car x))))
+     id-list)))
+
+(defun org-sr-card-data-find (card-data)
+  "Open the position of card CARD-DATA."
+  (let ((id (org-sr-card-data-id card-data))
+        (file (org-sr-card-data-file card-data)))
+    (if (org-sr-card-data-exist-p card-data)
+        (let ((_ (switch-to-buffer (find-file file)))
+              (pos (org-with-wide-buffer
+                    (org-map-entries (lambda () (point))
+                                     (format "+CARD_ID=%S" id)
+                                     'file))))
+          (goto-char pos))
+      (error "Card %S doesn't exist!" id))))
 
 ;;; Global data TODO
 ;; Do not update global data doesn't effect the algorithm, wait.
@@ -222,10 +310,10 @@ return the connection."
   "Set global data.")
 
 ;;; Update card factor at point
-(defun org-sr-card-update-factors (grade)
+(defun org-sr-update-factors (grade)
   "Update factors of card at point with grade GRADE."
   (let ((card-data (org-sr-util-cl-struct-to-alist
-                    (org-sr-db-get-card-data)))
+                    (org-sr-card-data-at-point)))
         (global-data (org-sr-db-get-global-data)))
    (request org-sr-algorithm-port
      :type "POST"
@@ -249,7 +337,7 @@ return the connection."
                           ;; (due (org-sr-card-data-due card-data))
                           ;; (global-data nil)
                           )
-                     (org-entry-put (point) "CARD_DATA" (org-sr-db-card-data-to-string card-data)))))))))
+                     (org-entry-put (point) "CARD_DATA" (org-sr-card-data-to-string card-data)))))))))
 
 (defun org-sr-card-data-at-point ()
   "Get card-data at this point.
@@ -288,6 +376,10 @@ If card uninitialized, return nil."
      (mapconcat (lambda (x) (concat (number-to-string x) ",")) mid-li)
      review)))
 
+;;; UI
+(defun org-sr ()
+  "Start spaced review."
+  ())
 
 (provide 'org-sr)
 ;;; org-sr.el ends here
