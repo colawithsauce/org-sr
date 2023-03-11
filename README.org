@@ -1,0 +1,94 @@
+#+title: Readme
+* 设计思路
+数据库部分将所有的卡片缓存。
+** 数据流
+*** 文本
+- card_id 使用 PROPERTIES 的形式
+- card_data 使用 PROPERTIES 形式，将许多的 params 列表式地给出
+- due 使用 org-mode 自带的 schedule time 来做
+*** Lisp 数据
+- card 结构体存放卡片自身的数据
+- card-data 结构体来存放卡片的数据
+- global-data 结构体来放全局数据
+*** 数据库中
+与 lisp 数据中的三个结构体对应的三张表。
+*** 与 fsrs.js 进行通信
+将 lisp 数据中的结构体转换成 alist，再用 json-encode 将 alist 转换成 json。
+返回的新的 card-data 与 global-data。
+
+使用 json-read-from-string 来将 fsrs.js 返回的 json 变成 card-data 与 global-data 结构体，并且将这些改变同步到数据库里面。
+** 控制流
+*** 进入的时候
+- 检查是否有新的卡片存在，如果新的卡片存在，则加入数据库里面。
+- 获取过期的时间是今天及以前的卡片列表
+- Shuffle 这个列表
+- 不断重复直到列表空
+  - 转到列表中的第一项，并从表中删除第一项
+  - 根据回答的grade 来 update 这个项目，同时 update 数据库里面的内容。（只需要使用 insert 就可以实现覆盖了）
+* test :card:
+:PROPERTIES:
+:CARD_ID:  bd905e5a-fd6e-412d-9e53-604c8bb376db
+:CARD_DATA: 2023-03-13T05:25:53.861Z,0,5,2,1,-1,0,1,2023-03-11T05:25:53.862Z
+:END:
+This is answer
+* another test :card:
+:PROPERTIES:
+:CARD_ID:  8bcbbcff-3de9-449f-aeed-717ab5f6070f
+:CARD_DATA: 2023-03-13T04:10:29.479Z,0,5,2,1,-1,0,1,2023-03-11T04:10:29.479Z
+:END:
+* Archive :ARCHIVE:
+** ACHIEVE code
+:PROPERTIES:
+:ARCHIVE_TIME: 2023-03-11 Sat 15:27
+:END:
+#+begin_src elisp
+(defun org-sr-db-get-card-data ()
+  "Get card data for fsrs algorithm at point.
+
+NOTE: The return value was just in list form, if not return nil.")
+
+(defun org-sr-db-card-data-to-json (card-data)
+  "Convert CARD-DATA into json string."
+  (let ((alist (org-sr-util-cl-struct-to-alist card-data)))
+    (json-encode alist)))
+
+(defun org-sr-db-card-data-from-json (str)
+  "Convert json string STR into card data."
+  (let ((alist (json-read-from-string str)))
+    (org-sr-util-cl-struct-from-alist
+     'org-sr-card-data alist)))
+
+(defun org-sr-card-get-data ()
+  "Get card data in json string used by algorithm at point."
+  (org-sr-db-card-data-to-json
+   (org-sr-db-card-data-at-point)))
+
+(defun org-sr-db-get-schedule-time ()
+  "Get schedule time for this entry."
+  (let ((time (org-get-scheduled-time (point))))
+    (format-time-string "%FT%T%z" time)))
+
+(defun org-sr-db-get-title ()
+  "Get title of card."
+  (org-entry-get (point) "ITEM"))
+
+(defun org-sr-db-get-contents ()
+  "Get the contents to memorize."
+  (let ((start (org-entry-beginning-position))
+        (end (org-entry-end-position)))
+    (buffer-substring-no-properties
+     start end)))
+
+(defun org-sr-db-insert-card ()
+  "Insert current card into database."
+  (when-let ((id (org-entry-get (point) "CARD_ID")))
+    (let ((file (buffer-file-name))
+          (due (org-sr-db-get-schedule-time))
+          (title (org-sr-db-get-title))
+          (contents (org-sr-db-get-contents)))
+      (org-sr-db-query
+       [:insert :into card
+        :values $v1]
+       (vector id file due title contents)))))
+
+#+end_src
