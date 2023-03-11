@@ -54,8 +54,31 @@
   :group 'org-sr
   :type 'string)
 
+
+;;; Utils
+(defun org-sr-util-cl-struct-to-alist (struct)
+  "Convert a cl-struct STRUCT instance to an alist."
+  (let* ((type (type-of struct))
+         (slot-list (mapcar #'car (cdr (cl-struct-slot-info type))))
+         (slots ()))
+    (dolist (slot slot-list)
+      (let ((value (cl-struct-slot-value type slot struct)))
+        (when value
+          (push (cons slot value) slots))))
+    slots))
+
+(defun org-sr-util-cl-struct-from-alist (type alist)
+  "Convert an ALIST into cl-struct TYPE."
+  (let* ((slot-list (mapcar #'car (cdr (cl-struct-slot-info type))))
+         (struct (funcall (intern (format "make-%s" type)))))
+    (dolist (slot slot-list)
+      (let ((value (alist-get slot alist)))
+        (setf (cl-struct-slot-value type slot struct) value)))
+    struct))
+
+;;; Database
 (defvar org-sr-db--connection nil
-  "Stable connection to Database.")
+  )
 
 (defun org-sr-db--get-connection ()
   "Get stable connection to database."
@@ -63,18 +86,6 @@
            (emacsql-live-p org-sr-db--connection))
       org-sr-db--connection
     nil))
-
-;;; Database things
-;;  This part should define functions to init database, add into database, and
-;;  remove from database, update whole database.
-;; (cl-defstruct org-sr-card
-;;   "Structure that represent a card to revise."
-;;   id file due title contents)
-
-(cl-defstruct org-sr-card-data
-  "Algorithm parameters."
-  id file due interval difficulty stability retrievability
-  grade lapses reps review)
 
 (defconst org-sr-schemata
   '((card-data
@@ -150,15 +161,6 @@ return the connection."
         (when (org-sr-db-card-p)
           (funcall fn)))))))
 
-;;; Card ID
-;; (defun org-sr-card-id-show (id)
-;;   "Goto the entry of given card id ID."
-;;   (let* ((card-data (org-sr-populate (make-org-sr-card-data :id id)))
-;;          (file (org-sr-card-data-file card-data)))
-;;     (switch-to-buffer (find-file file))
-;;     (let ((pos (org-sr-card-data-phisycal-pos card-data)))
-;;       (goto-char pos))))
-
 (defun org-sr-card-data-phisycal-pos (card-data)
   "If the card CARD-DATA still phisycally exist, return its position."
   (let* ((id (org-sr-card-data-id card-data))
@@ -169,107 +171,46 @@ return the connection."
                         (format "+CARD_ID=%S" id)
                         'file)))))
 
-;;; Utils
-(defun org-sr-util-cl-struct-to-alist (struct)
-  "Convert a cl-struct STRUCT instance to an alist."
-  (let* ((type (type-of struct))
-         (slot-list (mapcar #'car (cdr (cl-struct-slot-info type))))
-         (slots ()))
-    (dolist (slot slot-list)
-      (let ((value (cl-struct-slot-value type slot struct)))
-        (when value
-          (push (cons slot value) slots))))
-    slots))
-
-(defun org-sr-util-cl-struct-from-alist (type alist)
-  "Convert an ALIST into cl-struct TYPE."
-  (let* ((slot-list (mapcar #'car (cdr (cl-struct-slot-info type))))
-         (struct (funcall (intern (format "make-%s" type)))))
-    (dolist (slot slot-list)
-      (let ((value (alist-get slot alist)))
-        (setf (cl-struct-slot-value type slot struct) value)))
-    struct))
-
-;;; Card from database
-(cl-defmethod org-sr-populate ((card org-sr-card-data))
-  "Populate card data CARD according to database.")
-
-;;; Card ID from text
-(defun org-sr-db-get-card-id ()
-  "Get card id of card at point."
-  (if-let ((id (org-entry-get (point) "CARD_ID")))
-      id
-    (let ((id (uuidgen-4)))
-      (org-entry-put (point) "CARD_ID" id)
-      id)))
-
-;;; Card data
-(defun org-sr-db-get-card-data ()
-  "Get card-data at this point.
-
-If card uninitialized, return nil."
-  (if-let ((id (org-sr-db-get-card-id))
-           (data-list (string-split (org-entry-get (point) "CARD_DATA") ","))
-           (alist ()))
-      (pcase-let ((`(,due ,interval ,difficulty
-                     ,stability ,retrievability
-                     ,grade ,lapses ,reps ,review) data-list))
-        (make-org-sr-card-data
-         :id id :file file :due due
-         :interval (string-to-number interval)
-         :difficulty (string-to-number difficulty)
-         :stability (string-to-number stability)
-         :retrievability (string-to-number retrievability)
-         :grade (string-to-number grade)
-         :lapses (string-to-number lapses)
-         :reps (string-to-number reps)
-         :review (string-to-number  review)))
-    (let ((id (org-sr-db-get-card-id)))
-      (make-org-sr-card-data :id id))))
-
-(defun org-sr-db-card-data-to-string (card-data)
-  "Convert algorithm card-datas CARD-DATA into string."
-  (let ((mid-li
-         (mapcar (lambda (x)
-                   (cl-struct-slot-value 'org-sr-card-data x card-data))
-                 '(interval difficulty stability
-                   retrievability grade lapses reps)))
-        (due (org-sr-card-data-due card-data))
-        (review (org-sr-card-data-review card-data)))
-    (concat
-     due ","
-     (mapconcat (lambda (x) (concat (number-to-string x) ",")) mid-li)
-     review)))
-
 (defun org-sr-db-insert-card-data ()
-  "Insert card data at point into database.
-
-If existed in database, overwrite."
-  (let* ((card (org-sr-db-get-card-data))
+  "Insert card data at point into database."
+  (let* ((data-list (string-split (org-entry-get (point) "CARD_DATA") ","))
          (id (org-sr-db-get-card-id))
-         (file (buffer-file-name))
-         (due (org-sr-card-data-due card))
-         (interval (org-sr-card-data-interval card))
-         (difficulty (org-sr-card-data-difficulty card))
-         (stability (org-sr-card-data-stability card))
-         (retrievability (org-sr-card-data-retrievability card))
-         (grade (org-sr-card-data-grade card))
-         (lapses (org-sr-card-data-lapses card))
-         (reps (org-sr-card-data-reps card))
-         (review (org-sr-card-data-review card)))
-    (org-sr-db-query
-     [:insert :into card-data
-      :value $v1]
-     (vector id file due interval difficulty stability retrievability grade lapses
-             reps review))))
+         (file (buffer-file-name)))
+    (pcase-let ((`(,due ,interval ,difficulty ,stability ,retrievability
+                   ,grade ,lapses ,reps ,review) data-list))
+      (org-sr-db-query
+       [:insert :into card-data
+        :value $v1]
+       (vector id file due interval difficulty stability retrievability grade lapses
+               reps review)))))
 
 (defun org-sr-db-clear-card-data (&optional id)
   "Clear cache for card ID in database."
   (setq id (or id (org-sr-db-get-card-id)))
   (org-sr-db-query
    [:delete :from card-data
-    :where (= id $s1)]
-   id))
+    :where (= id $s1)] id))
+
+(defun org-sr-db-get-card-id ()
+  "Get card id of card at point, if doesn't exist yet, creat one."
+  (if-let ((id (org-entry-get (point) "CARD_ID")))
+      id
+    (let ((id (uuidgen-4)))
+      (org-entry-put (point) "CARD_ID" id)
+      id)))
+
+;;; Card & card-data
+(cl-defstruct org-sr-card
+  "Structure that represent a card to revise."
+  id file due title contents)
+
+(cl-defstruct org-sr-card-data
+  "Algorithm parameters."
+  id file due interval difficulty stability retrievability
+  grade lapses reps review)
+
+(cl-defmethod org-sr-populate ((card org-sr-card-data))
+  "Populate card data CARD according to database.")
 
 ;;; Global data TODO
 ;; Do not update global data doesn't effect the algorithm, wait.
@@ -310,6 +251,42 @@ If existed in database, overwrite."
                           )
                      (org-entry-put (point) "CARD_DATA" (org-sr-db-card-data-to-string card-data)))))))))
 
+(defun org-sr-card-data-at-point ()
+  "Get card-data at this point.
+
+If card uninitialized, return nil."
+  (if-let ((id (org-sr-db-get-card-id))
+           (data-list (string-split (org-entry-get (point) "CARD_DATA") ","))
+           (alist ()))
+      (pcase-let ((`(,due ,interval ,difficulty
+                     ,stability ,retrievability
+                     ,grade ,lapses ,reps ,review) data-list))
+        (make-org-sr-card-data
+         :id id :file file :due due
+         :interval (string-to-number interval)
+         :difficulty (string-to-number difficulty)
+         :stability (string-to-number stability)
+         :retrievability (string-to-number retrievability)
+         :grade (string-to-number grade)
+         :lapses (string-to-number lapses)
+         :reps (string-to-number reps)
+         :review (string-to-number  review)))
+    (let ((id (org-sr-db-get-card-id)))
+      (make-org-sr-card-data :id id))))
+
+(defun org-sr-card-data-to-string (card-data)
+  "Convert algorithm card-datas CARD-DATA into string."
+  (let ((mid-li
+         (mapcar (lambda (x)
+                   (cl-struct-slot-value 'org-sr-card-data x card-data))
+                 '(interval difficulty stability
+                   retrievability grade lapses reps)))
+        (due (org-sr-card-data-due card-data))
+        (review (org-sr-card-data-review card-data)))
+    (concat
+     due ","
+     (mapconcat (lambda (x) (concat (number-to-string x) ",")) mid-li)
+     review)))
 
 
 (provide 'org-sr)
