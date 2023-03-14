@@ -52,6 +52,9 @@
   :group 'org-sr
   :type 'string)
 
+(defcustom org-sr-global-data-location (file-name-concat user-emacs-directory "org-sr-global.json")
+  "Path to file that store user global data.")
+
 
 ;;; Utils
 (defun org-sr-util-cl-struct-to-alist (struct)
@@ -93,7 +96,7 @@
     (card-data
      ([(id :primary-key :not-null)
        (file :not-null)
-       (due real)
+       (due integer)
        interval
        difficulty
        stability
@@ -101,7 +104,7 @@
        grade
        lapses
        reps
-       (review real)]
+       (review integer)]
       (:foreign-key [file] :references files [file] :on-delete :cascade)))
     (global-data
      [(id :primary-key :not-null)
