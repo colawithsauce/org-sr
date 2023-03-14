@@ -468,6 +468,7 @@ If KILL, kill current buffer."
         (progn (org-sr-card-data-find (car li))
                (org-narrow-to-subtree)
                (org-fold-hide-entry))
+      (when (and (eq major-mode 'org-mode) (org-buffer-narrowed-p)) (widen))
       (message "No more cards to learn today anymore! Have a nice day!"))))
 
 (provide 'org-sr)
