@@ -105,19 +105,7 @@
        lapses
        reps
        (review integer)]
-      (:foreign-key [file] :references files [file] :on-delete :cascade)))
-    (global-data
-     [(id :primary-key :not-null)
-      difficultyDecay
-      stabilityDecay
-      increaseFactor
-      requestRetention
-      totalCase
-      totalDiff
-      totalReview
-      defaultDifficulty
-      defaultStability
-      stabilityDataArry]))
+      (:foreign-key [file] :references files [file] :on-delete :cascade))))
   "Schema table of org-sr.")
 
 (defun org-sr-db--init (conn)
