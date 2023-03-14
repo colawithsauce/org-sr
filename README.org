@@ -1,42 +1,36 @@
 #+title: Readme
+* yet another spaced review package for org-mode
+- [ ] 仍在测试中 Still testing
+- [X] 基本功能已经开发完毕 Basic function implemented.
 * 设计思路
 数据库部分将所有的卡片缓存。
 ** 数据流
 *** 文本
 - card_id 使用 PROPERTIES 的形式
 - card_data 使用 PROPERTIES 形式，将许多的 params 列表式地给出
-- due 使用 org-mode 自带的 schedule time 来做
 *** Lisp 数据
-- card 结构体存放卡片自身的数据
 - card-data 结构体来存放卡片的数据
 - global-data 结构体来放全局数据
 *** 数据库中
-与 lisp 数据中的三个结构体对应的三张表。
+- card-data 保存所有的卡片的数据
+- files 保存所有的文件及其哈希值，以实现增量更新 card-data 数据库。
 *** 与 fsrs.js 进行通信
 将 lisp 数据中的结构体转换成 alist，再用 json-encode 将 alist 转换成 json。
 返回的新的 card-data 与 global-data。
 
 使用 json-read-from-string 来将 fsrs.js 返回的 json 变成 card-data 与 global-data 结构体，并且将这些改变同步到数据库里面。
-** 控制流
-*** 进入的时候
-- 检查是否有新的卡片存在，如果新的卡片存在，则加入数据库里面。
-- 获取过期的时间是今天及以前的卡片列表
-- Shuffle 这个列表
-- 不断重复直到列表空
-  - 转到列表中的第一项，并从表中删除第一项
-  - 根据回答的grade 来 update 这个项目，同时 update 数据库里面的内容。（只需要使用 insert 就可以实现覆盖了）
-** 何时同步？
-1. 当有外部的改动的时候：hash 会有变化，不同于
-* test :card:
+** 同步策略：
+* 卡片例子
+** card example :card:
 :PROPERTIES:
 :CARD_ID:  bd905e5a-fd6e-412d-9e53-604c8bb376db
-:CARD_DATA: 2023-03-13T05:25:53.861Z,0,5,2,1,-1,0,1,2023-03-11T05:25:53.862Z
+:CARD_DATA: 2023-03-23T14:04:49.628Z,4,5.010000000000001,9.075440292178332,0.81,1,0,2,2023-03-14T14:04:49.624Z
 :END:
 This is answer
-* another test :card:
+** another test :card:
 :PROPERTIES:
 :CARD_ID:  8bcbbcff-3de9-449f-aeed-717ab5f6070f
-:CARD_DATA: 2023-03-13T04:10:29.479Z,0,5,2,1,-1,0,1,2023-03-11T04:10:29.479Z
+:CARD_DATA: 2023-03-24T14:07:43.800Z,4,4.010000000000001,10.268730125807526,0.81,2,0,2,2023-03-14T14:07:43.800Z
 :END:
 * Archive :ARCHIVE:
 ** ACHIEVE code
