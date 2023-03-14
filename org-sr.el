@@ -353,7 +353,9 @@ If no FILE-PATH, use current file."
   (let* ((time-sec (time-to-seconds (current-time)))
          (id-list
           (org-sr-db-query
-           [:select id :from card-data :where (< due $s1)] time-sec)))
+           [:select id :from card-data
+            :where (< due $s1)
+            :order-by due] time-sec)))
     (mapcar
      (lambda (x)
        (org-sr-populate (make-org-sr-card-data :id (car x))))
