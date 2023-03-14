@@ -39,10 +39,10 @@
   :group 'org-sr
   :type 'string)
 
-(defcustom org-sr-algorithm-port "http://localhost:8970"
+(defcustom org-sr-algorithm-port 8970
   "Address and port of applying algorithm."
   :group 'org-sr
-  :type 'string)
+  :type 'integer)
 
 (defcustom org-sr-files-exclude-regexp nil
   "Exclude regex expression for card files."
@@ -89,7 +89,10 @@
     nil))
 
 (defconst org-sr-schemata
-  '((card-data
+  '((files
+     [(file :primary-key :not-null)
+      (hash :not-null)])
+    (card-data
      ([(id :primary-key :not-null)
        (file :not-null)
        (due text)
@@ -100,7 +103,8 @@
        grade
        lapses
        reps
-       (review text)]))
+       (review text)]
+      (:foreign-key [file] :references files [file] :on-delete :cascade)))
     (global-data
      [(id :primary-key :not-null)
       difficultyDecay
@@ -169,6 +173,35 @@ return the connection."
         (when (org-sr-db-card-p)
           (funcall fn)))))))
 
+(defun org-sr-db--current-file-list ()
+  "Get current file list in database."
+  (let ((current-files (org-sr-db-query [:select [file hash] :from files]))
+        (ht (make-hash-table :test #'equal)))
+    (dolist (row current-files)
+      (puthash (car row) (cadr row) ht))
+    ht))
+
+(defun org-sr-db--file-hash (file-path)
+  "Compute the hash of FILE-PATH."
+  (with-temp-buffer
+    (set-buffer-multibyte nil)
+    (insert-file-contents-literally file-path)
+    (secure-hash 'sha1 (current-buffer))))
+
+(defun org-sr-db-clear-file (&optional file)
+  "Clear file FILE data from database."
+  (setq file (or file (buffer-file-name)))
+  (org-sr-db-query
+   [:delete :from files
+    :where (= file $s1)]
+   file))
+
+(defun org-sr-db-insert-file (&optional file-hash file-path)
+  "Insert file of FILE-PATH into database."
+  (let* ((file-path (or file-path (buffer-file-name))))
+    (org-sr-db-query [:insert-into files :values $v1]
+                     (vector file-path file-hash))))
+
 (defun org-sr-db-insert-card-data ()
   "Insert card data at point into database."
   (let ((id (org-sr-db-get-card-id))
@@ -220,17 +253,45 @@ return the connection."
 
 If FORCE, force it."
   (interactive)
+  ;; Force reconnect
   (org-sr-db--close)
   (when force (delete-file org-sr-db-location))
   (org-sr-db)
-  ;; TODO: update cache only when they changed.
-  (dolist (file (org-sr-db-list-files))
-    (with-current-buffer (find-file-noselect file)
-      (org-sr-db-map-cards
-       (list #'org-sr-db-insert-card-data)))))
+  ;; Get those deleted file list
+  (let ((current-files (org-sr-db--current-file-list))
+        (physical-files (org-sr-db-list-files))
+        (modified-files nil))
+    (dolist (file physical-files)
+      (let ((content-hash (org-sr-db--file-hash file))) ; get modified files
+        (unless (string= (gethash file current-files)
+                         content-hash)
+          (push file modified-files)))
+      (remhash file current-files))    ; current - physical = desolated
+    (dolist (file (hash-table-keys current-files))
+      (org-sr-db-clear-file file))
+    (dolist (file modified-files)
+      (condition-case err
+          (org-sr-db-update-file file)
+        (error
+         (org-sr-db-clear-file file)
+         (lwarn 'org-sr :error "Failed to process file %s with error %s removing..."
+                file (error-message-string err)))))))
 
-(defun org-sr-db-update-file ()
-  "Update informations about current file in database.")
+(defun org-sr-db-update-file (&optional file-path)
+  "Update informations about FILE-PATH in database.
+
+If no FILE-PATH, use current file."
+  (setq file-path (or file-path (buffer-file-name)))
+  (let ((file-hash (org-sr-db--file-hash file-path))
+        (db-hash (caar (org-sr-db-query
+                       [:select hash :from files
+                        :where (= file $s1)] file-path))))
+    (unless (string= file-hash db-hash)
+      (with-current-buffer (find-file-noselect file-path)
+        (org-sr-db-clear-file)
+        (org-sr-db-insert-file file-hash)
+        (org-sr-db-map-cards
+         (list #'org-sr-db-insert-card-data))))))
 
 ;;; Card & card-data
 (cl-defstruct org-sr-card-data
@@ -297,7 +358,8 @@ If FORCE, force it."
                     (org-map-entries (lambda () (point))
                                      (format "+CARD_ID=%S" id)
                                      'file))))
-          (goto-char pos))
+          (when (org-buffer-narrowed-p) (widen))
+          (goto-char (car pos)))
       (error "Card %S doesn't exist!" id))))
 
 ;;; Global data TODO
@@ -312,40 +374,44 @@ If FORCE, force it."
 ;;; Update card factor at point
 (defun org-sr-update-factors (grade)
   "Update factors of card at point with grade GRADE."
-  (let ((card-data (org-sr-util-cl-struct-to-alist
-                    (org-sr-card-data-at-point)))
-        (global-data (org-sr-db-get-global-data)))
-   (request org-sr-algorithm-port
-     :type "POST"
-     :data (json-encode
-            `(("jsonrpc " . "2.0") ("method" . "fsrs") ("id" . 1)
-              ("params" . [,card-data
-                           ,grade
-                           ,global-data])))
-     :headers '(("Content-Type" . "application/json"))
-     :parser #'json-read
-     :encoding 'utf-8
-     :sync t
-     :success (cl-function
-               (lambda (&key data &allow-other-keys)
-                 ;; (message "%S" data)
-                 (if (alist-get 'error data)
-                     (message "%S" (alist-get 'error data))
-                   (let* ((result (alist-get 'result data))
-                          (card-data (org-sr-util-cl-struct-from-alist
-                                      'org-sr-card-data (aref result 0)))
-                          ;; (due (org-sr-card-data-due card-data))
-                          ;; (global-data nil)
-                          )
-                     (org-entry-put (point) "CARD_DATA" (org-sr-card-data-to-string card-data)))))))))
+  (interactive "nYour score: ")
+  (when (memq grade (list -1 0 1 2))
+    (let ((card-data (org-sr-util-cl-struct-to-alist
+                      (org-sr-card-data-at-point)))
+          (global-data (org-sr-db-get-global-data)))
+      (with-temp-message "Requesting ..."
+        (request (concat "http://localhost:" (number-to-string org-sr-algorithm-port))
+          :type "POST"
+          :data (json-encode
+                 `(("jsonrpc " . "2.0") ("method" . "fsrs") ("id" . 1)
+                   ("params" . [,card-data
+                                ,grade
+                                ,global-data])))
+          :headers '(("Content-Type" . "application/json"))
+          :parser #'json-read
+          :encoding 'utf-8
+          :sync t
+          :success (cl-function
+                    (lambda (&key data &allow-other-keys)
+                      ;; (message "%S" data)
+                      (if (alist-get 'error data)
+                          (message "%S" (alist-get 'error data))
+                        (let* ((result (alist-get 'result data))
+                               (card-data (org-sr-util-cl-struct-from-alist
+                                           'org-sr-card-data (aref result 0))))
+                          (org-entry-put (point) "CARD_DATA" (org-sr-card-data-to-string card-data))
+                          (save-buffer)
+                          (org-sr-db-update-file)
+                          (org-sr-next t))))))))))
 
 (defun org-sr-card-data-at-point ()
   "Get card-data at this point.
 
 If card uninitialized, return nil."
-  (if-let ((id (org-sr-db-get-card-id))
-           (data-list (string-split (org-entry-get (point) "CARD_DATA") ","))
-           (alist ()))
+  (if-let* ((id (org-sr-db-get-card-id))
+            (data-list (org-entry-get (point) "CARD_DATA"))
+            (data-list (string-split data-list ","))
+            (file (buffer-file-name)))
       (pcase-let ((`(,due ,interval ,difficulty
                      ,stability ,retrievability
                      ,grade ,lapses ,reps ,review) data-list))
@@ -358,7 +424,7 @@ If card uninitialized, return nil."
          :grade (string-to-number grade)
          :lapses (string-to-number lapses)
          :reps (string-to-number reps)
-         :review (string-to-number  review)))
+         :review review))
     (let ((id (org-sr-db-get-card-id)))
       (make-org-sr-card-data :id id))))
 
@@ -379,7 +445,18 @@ If card uninitialized, return nil."
 ;;; UI
 (defun org-sr ()
   "Start spaced review."
-  ())
+  (interactive)
+  (org-sr-next))
+
+(defun org-sr-next (&optional kill)
+  "Switch to next card.
+
+If KILL, kill current buffer."
+  (when kill (kill-buffer))
+  (let ((today (org-sr-card-data-today-list)))
+    (org-sr-card-data-find (car today))
+    (org-narrow-to-subtree)
+    (org-fold-hide-entry)))
 
 (provide 'org-sr)
 ;;; org-sr.el ends here

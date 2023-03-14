@@ -25,6 +25,8 @@
 - 不断重复直到列表空
   - 转到列表中的第一项，并从表中删除第一项
   - 根据回答的grade 来 update 这个项目，同时 update 数据库里面的内容。（只需要使用 insert 就可以实现覆盖了）
+** 何时同步？
+1. 当有外部的改动的时候：hash 会有变化，不同于
 * test :card:
 :PROPERTIES:
 :CARD_ID:  bd905e5a-fd6e-412d-9e53-604c8bb376db
