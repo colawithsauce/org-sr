@@ -474,12 +474,13 @@ If card uninitialized, return nil."
 
 If KILL, kill current buffer."
   (when kill (kill-buffer))
-  (let* ((newcard (org-sr-card-data-uninitialized-list))
-         (today (org-sr-card-data-today-list))
-         (li (append newcard today)))
-    (org-sr-card-data-find (car li))
-    (org-narrow-to-subtree)
-    (org-fold-hide-entry)))
+  (let ((newcard (org-sr-card-data-uninitialized-list))
+        (today (org-sr-card-data-today-list)))
+    (if-let* ((li (append newcard today)))
+        (progn (org-sr-card-data-find (car li))
+               (org-narrow-to-subtree)
+               (org-fold-hide-entry))
+      (message "No more cards to learn today anymore! Have a nice day!"))))
 
 (provide 'org-sr)
 ;;; org-sr.el ends here
