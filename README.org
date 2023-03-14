@@ -21,14 +21,16 @@
 使用 json-read-from-string 来将 fsrs.js 返回的 json 变成 card-data 与 global-data 结构体，并且将这些改变同步到数据库里面。
 ** 同步策略：
 * 卡片例子
-** card example :card:
+#+begin_src org
+,** card example :card:
 :PROPERTIES:
 :CARD_ID:  bd905e5a-fd6e-412d-9e53-604c8bb376db
 :CARD_DATA: 2023-03-23T14:04:49.628Z,4,5.010000000000001,9.075440292178332,0.81,1,0,2,2023-03-14T14:04:49.624Z
 :END:
 This is answer
-** another test :card:
+,** another test :card:
 :PROPERTIES:
 :CARD_ID:  8bcbbcff-3de9-449f-aeed-717ab5f6070f
 :CARD_DATA: 2023-03-24T14:07:43.800Z,4,4.010000000000001,10.268730125807526,0.81,2,0,2,2023-03-14T14:07:43.800Z
 :END:
+#+end_src
