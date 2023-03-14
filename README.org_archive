@@ -1,0 +1,67 @@
+#    -*- mode: org -*-
+
+
+Archived entries from file /home/colawithsauce/Project/org-sr/README.org
+
+
+* Archive
+:PROPERTIES:
+:ARCHIVE_TIME: 2023-03-14 Tue 22:25
+:ARCHIVE_FILE: ~/Project/org-sr/README.org
+:ARCHIVE_CATEGORY: README
+:END:
+** ACHIEVE code
+:PROPERTIES:
+:ARCHIVE_TIME: 2023-03-11 Sat 15:27
+:END:
+#+begin_src elisp
+(defun org-sr-db-get-card-data ()
+  "Get card data for fsrs algorithm at point.
+
+NOTE: The return value was just in list form, if not return nil.")
+
+(defun org-sr-db-card-data-to-json (card-data)
+  "Convert CARD-DATA into json string."
+  (let ((alist (org-sr-util-cl-struct-to-alist card-data)))
+    (json-encode alist)))
+
+(defun org-sr-db-card-data-from-json (str)
+  "Convert json string STR into card data."
+  (let ((alist (json-read-from-string str)))
+    (org-sr-util-cl-struct-from-alist
+     'org-sr-card-data alist)))
+
+(defun org-sr-card-get-data ()
+  "Get card data in json string used by algorithm at point."
+  (org-sr-db-card-data-to-json
+   (org-sr-db-card-data-at-point)))
+
+(defun org-sr-db-get-schedule-time ()
+  "Get schedule time for this entry."
+  (let ((time (org-get-scheduled-time (point))))
+    (format-time-string "%FT%T%z" time)))
+
+(defun org-sr-db-get-title ()
+  "Get title of card."
+  (org-entry-get (point) "ITEM"))
+
+(defun org-sr-db-get-contents ()
+  "Get the contents to memorize."
+  (let ((start (org-entry-beginning-position))
+        (end (org-entry-end-position)))
+    (buffer-substring-no-properties
+     start end)))
+
+(defun org-sr-db-insert-card ()
+  "Insert current card into database."
+  (when-let ((id (org-entry-get (point) "CARD_ID")))
+    (let ((file (buffer-file-name))
+          (due (org-sr-db-get-schedule-time))
+          (title (org-sr-db-get-title))
+          (contents (org-sr-db-get-contents)))
+      (org-sr-db-query
+       [:insert :into card
+        :values $v1]
+       (vector id file due title contents)))))
+
+#+end_src
