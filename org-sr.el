@@ -375,12 +375,17 @@ If no FILE-PATH, use current file."
 
 ;;; Global data TODO
 ;; Do not update global data doesn't effect the algorithm, wait.
-(defun org-sr-db-get-global-data ()
-  "Get global data."
-  nil)
+(defun org-sr-global-data-get ()
+  "Get global data from file."
+  (when (and (file-exists-p org-sr-global-data-location)
+             (json-read-file org-sr-global-data-location))
+      (json-read-file org-sr-global-data-location)))
 
-(defun org-sr-db-set-global-data ()
-  "Set global data.")
+(defun org-sr-global-data-set (data)
+  "Store global data DATA into json file."
+  (with-temp-buffer
+    (insert (json-encode data))
+    (write-file org-sr-global-data-location)))
 
 ;;; Update card factor at point
 (defun org-sr-update-factors (grade)
@@ -389,7 +394,7 @@ If no FILE-PATH, use current file."
   (if (memq grade (list -1 0 1 2))
     (let ((card-data (org-sr-util-cl-struct-to-alist
                       (org-sr-card-data-at-point)))
-          (global-data (org-sr-db-get-global-data)))
+          (global-data (org-sr-global-data-get)))
       (with-temp-message "Requesting ..."
         (request (concat "http://localhost:" (number-to-string org-sr-algorithm-port))
           :type "POST"
@@ -409,7 +414,9 @@ If no FILE-PATH, use current file."
                           (message "%S" (alist-get 'error data))
                         (let* ((result (alist-get 'result data))
                                (card-data (org-sr-util-cl-struct-from-alist
-                                           'org-sr-card-data (aref result 0))))
+                                           'org-sr-card-data (aref result 0)))
+                               (global-data (aref result 1)))
+                          (org-sr-global-data-set global-data)
                           (org-entry-put (point) "CARD_DATA" (org-sr-card-data-to-string card-data))
                           (save-buffer)
                           (org-sr-db-update-file)
