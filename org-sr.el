@@ -28,8 +28,6 @@
 (require 'parse-time)
 (require 'dash)
 
-;; (require 'org-sr-util)
-
 (defgroup org-sr nil
   "Card abstraction of org-mode."
   :group 'org)
@@ -95,7 +93,7 @@
     (card-data
      ([(id :primary-key :not-null)
        (file :not-null)
-       (due text)
+       (due real)
        interval
        difficulty
        stability
@@ -103,7 +101,7 @@
        grade
        lapses
        reps
-       (review text)]
+       (review real)]
       (:foreign-key [file] :references files [file] :on-delete :cascade)))
     (global-data
      [(id :primary-key :not-null)
@@ -205,31 +203,32 @@ return the connection."
 (defun org-sr-db-insert-card-data ()
   "Insert card data at point into database."
   (let ((id (org-sr-db-get-card-id))
-        (file (buffer-file-name))
-        (today-str (format-time-string "%FT%TZ" (current-time) t)))
+        (file (buffer-file-name)))
     (when (org-sr-db-query [:select * :from card-data
                             :where (= id $s1)] id)
       (error "Card %S already contained!" id))
     (if-let* ((data-list (org-entry-get (point) "CARD_DATA"))
-                (data-list (string-split data-list ",")))
-          (pcase-let ((`(,due ,interval ,difficulty ,stability ,retrievability
-                         ,grade ,lapses ,reps ,review) data-list))
-            (org-sr-db-query
-             [:insert :into card-data
-              :values $v1]
-             (vector id file due
-                     (string-to-number interval)
-                     (string-to-number difficulty)
-                     (string-to-number stability)
-                     (string-to-number retrievability)
-                     (string-to-number grade)
-                     (string-to-number lapses)
-                     (string-to-number reps)
-                     review)))
-        (org-sr-db-query
-         [:insert-into card-data
-          [id file due] :values $v1]
-         (vector id file today-str)))))
+              (data-list (string-split data-list ",")))
+        (pcase-let* ((`(,due ,interval ,difficulty ,stability ,retrievability
+                       ,grade ,lapses ,reps ,review) data-list)
+                     (due (time-to-seconds (encode-time (iso8601-parse due))))
+                     (review (time-to-seconds (encode-time (iso8601-parse review)))))
+          (org-sr-db-query
+           [:insert :into card-data
+            :values $v1]
+           (vector id file due
+                   (string-to-number interval)
+                   (string-to-number difficulty)
+                   (string-to-number stability)
+                   (string-to-number retrievability)
+                   (string-to-number grade)
+                   (string-to-number lapses)
+                   (string-to-number reps)
+                   review)))
+      (org-sr-db-query
+       [:insert-into card-data
+                     [id file] :values $v1]
+       (vector id file)))))
 
 (defun org-sr-db-clear-card-data (&optional id)
   "Clear cache for card ID in database."
@@ -310,10 +309,11 @@ If no FILE-PATH, use current file."
                                      :where (= id $s1)
                                      :limit 1]
                                     id))))
-    ;; TODO fill the card data
-    (pcase-let ((`(,file ,due ,interval ,difficulty ,stability
+    (pcase-let* ((`(,file ,due ,interval ,difficulty ,stability
                    ,retrievability ,grade ,lapses ,reps ,review)
-                 card-data-info))
+                 card-data-info)
+                 (due (format-time-string "%FT%TZ" (seconds-to-time due) "UTC"))
+                 (review (format-time-string "%FT%TZ" (seconds-to-time review) "UTC")))
       (setf (org-sr-card-data-file card-data) file
             (org-sr-card-data-due card-data) due
             (org-sr-card-data-interval card-data) interval
@@ -337,12 +337,20 @@ If no FILE-PATH, use current file."
                           (format "+CARD_ID=%S" id)
                           'file))))))
 
+(defun org-sr-card-data-uninitialized-list ()
+  "Return the list of all uninitialized cards."
+  (let ((id-list (org-sr-db-query
+                  [:select id :from card-data :where due :is :null])))
+    (mapcar
+     (lambda (x) (org-sr-populate (make-org-sr-card-data :id (car x))))
+     id-list)))
+
 (defun org-sr-card-data-today-list ()
   "Return the list of all card-data that dued today and before."
-  (let* ((time-str (format-time-string "%FT%TZ" (current-time) t))
+  (let* ((time-sec (time-to-seconds (current-time)))
          (id-list
           (org-sr-db-query
-           (format "SELECT id FROM card_data WHERE due < DATE('%s')" time-str))))
+           [:select id :from card-data :where (< due $s1)] time-sec)))
     (mapcar
      (lambda (x)
        (org-sr-populate (make-org-sr-card-data :id (car x))))
@@ -375,7 +383,7 @@ If no FILE-PATH, use current file."
 (defun org-sr-update-factors (grade)
   "Update factors of card at point with grade GRADE."
   (interactive "nYour score: ")
-  (when (memq grade (list -1 0 1 2))
+  (if (memq grade (list -1 0 1 2))
     (let ((card-data (org-sr-util-cl-struct-to-alist
                       (org-sr-card-data-at-point)))
           (global-data (org-sr-db-get-global-data)))
@@ -402,7 +410,8 @@ If no FILE-PATH, use current file."
                           (org-entry-put (point) "CARD_DATA" (org-sr-card-data-to-string card-data))
                           (save-buffer)
                           (org-sr-db-update-file)
-                          (org-sr-next t))))))))))
+                          (org-sr-next t))))))))
+    (message "Grade must be one of -1, 0, 1, 2!")))
 
 (defun org-sr-card-data-at-point ()
   "Get card-data at this point.
@@ -453,8 +462,10 @@ If card uninitialized, return nil."
 
 If KILL, kill current buffer."
   (when kill (kill-buffer))
-  (let ((today (org-sr-card-data-today-list)))
-    (org-sr-card-data-find (car today))
+  (let* ((newcard (org-sr-card-data-uninitialized-list))
+         (today (org-sr-card-data-today-list))
+         (li (append newcard today)))
+    (org-sr-card-data-find (car li))
     (org-narrow-to-subtree)
     (org-fold-hide-entry)))
 
