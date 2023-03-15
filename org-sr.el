@@ -202,8 +202,8 @@ return the connection."
               (data-list (string-split data-list ",")))
         (pcase-let* ((`(,due ,interval ,difficulty ,stability ,retrievability
                        ,grade ,lapses ,reps ,review) data-list)
-                     (due (time-to-seconds (encode-time (iso8601-parse due))))
-                     (review (time-to-seconds (encode-time (iso8601-parse review)))))
+                     (due (time-to-days (encode-time (iso8601-parse due))))
+                     (review (time-to-days (encode-time (iso8601-parse review)))))
           (org-sr-db-query
            [:insert :into card-data
             :values $v1]
@@ -303,8 +303,8 @@ If no FILE-PATH, use current file."
     (pcase-let* ((`(,file ,due ,interval ,difficulty ,stability
                    ,retrievability ,grade ,lapses ,reps ,review)
                  card-data-info)
-                 (due (format-time-string "%FT%TZ" (seconds-to-time due) "UTC"))
-                 (review (format-time-string "%FT%TZ" (seconds-to-time review) "UTC")))
+                 (due (format-time-string "%FT%TZ" (days-to-time due) "UTC"))
+                 (review (format-time-string "%FT%TZ" (days-to-time review) "UTC")))
       (setf (org-sr-card-data-file card-data) file
             (org-sr-card-data-due card-data) due
             (org-sr-card-data-interval card-data) interval
@@ -338,11 +338,11 @@ If no FILE-PATH, use current file."
 
 (defun org-sr-card-data-today-list ()
   "Return the list of all card-data that dued today and before."
-  (let* ((time-sec (time-to-seconds (current-time)))
+  (let* ((time-sec (time-to-days (current-time)))
          (id-list
           (org-sr-db-query
            [:select id :from card-data
-            :where (< due $s1)
+            :where (<= due $s1)
             :order-by due] time-sec)))
     (mapcar
      (lambda (x)
