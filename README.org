@@ -20,6 +20,8 @@
 
 使用 json-read-from-string 来将 fsrs.js 返回的 json 变成 card-data 与 global-data 结构体，并且将这些改变同步到数据库里面。
 ** 同步策略：
+- [ ] 当文件改变的时候重新缓存
+- [ ] 当程序进行了升级的时候，或者 SQLite 进行了升级的时候
 * 卡片例子
 #+begin_src org
 ,** card example :card:
