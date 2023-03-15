@@ -277,13 +277,14 @@ If no FILE-PATH, use current file."
                        [:select hash :from files
                         :where (= file $s1)] file-path))))
     (unless (string= file-hash db-hash)
-      (with-temp-buffer
-        (insert-file-contents file)
-        (org-mode)
-        (org-sr-db-clear-file)
-        (org-sr-db-insert-file file-hash)
-        (org-sr-db-map-cards
-         (list #'org-sr-db-insert-card-data))))))
+      (let ((find-file-hook nil))
+        (with-current-buffer (find-file-noselect file-path)
+          (insert-file-contents file-path)
+          (org-mode)
+          (org-sr-db-clear-file)
+          (org-sr-db-insert-file file-hash)
+          (org-sr-db-map-cards
+           (list #'org-sr-db-insert-card-data)))))))
 
 ;;; Card & card-data
 (cl-defstruct org-sr-card-data
