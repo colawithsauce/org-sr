@@ -277,7 +277,9 @@ If no FILE-PATH, use current file."
                        [:select hash :from files
                         :where (= file $s1)] file-path))))
     (unless (string= file-hash db-hash)
-      (with-current-buffer (find-file-noselect file-path)
+      (with-temp-buffer
+        (insert-file-contents file)
+        (org-mode)
         (org-sr-db-clear-file)
         (org-sr-db-insert-file file-hash)
         (org-sr-db-map-cards
@@ -322,7 +324,9 @@ If no FILE-PATH, use current file."
   (let* ((id (org-sr-card-data-id card-data))
          (file (org-sr-card-data-file card-data)))
     (when (file-exists-p file)
-      (with-current-buffer (find-file-noselect file)
+      (with-temp-buffer
+        (insert-file-contents file)
+        (org-mode)
         (org-with-wide-buffer
          (org-map-entries (lambda () (point))
                           (format "+CARD_ID=%S" id)
