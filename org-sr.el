@@ -186,7 +186,7 @@ return the connection."
    file))
 
 (defun org-sr-db-insert-file (&optional file-hash file-path)
-  "Insert file of FILE-PATH into database."
+  "Insert file of FILE-PATH and its FILE-HASH into database."
   (let* ((file-path (or file-path (buffer-file-name))))
     (org-sr-db-query [:insert-into files :values $v1]
                      (vector file-path file-hash))))
@@ -279,8 +279,6 @@ If no FILE-PATH, use current file."
     (unless (string= file-hash db-hash)
       (let ((find-file-hook nil))
         (with-current-buffer (find-file-noselect file-path)
-          (insert-file-contents file-path)
-          (org-mode)
           (org-sr-db-clear-file)
           (org-sr-db-insert-file file-hash)
           (org-sr-db-map-cards
